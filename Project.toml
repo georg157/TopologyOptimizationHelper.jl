@@ -1,0 +1,13 @@
+name = "TopologyOptimizationHelper"
+uuid = "b5275363-5667-4a27-81d8-f48bed5c410a"
+authors = ["George Shaker"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.6.7"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
