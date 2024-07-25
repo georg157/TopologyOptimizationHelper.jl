@@ -1,5 +1,6 @@
 module TopologyOptimizationHelper
 
-# Write your package code here.
+export Maxwell1d
+include("functions.jl")
 
 end
