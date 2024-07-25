@@ -153,11 +153,11 @@ export ∇_ω_LDOS
 function Improved_∇_ε_LDOS(A, ε, ω, b; resolution=20, dpml=2, x₀=b, ω_pml=ω)
     # The matrix argument A := A(ε, Re(eval_ω))
     # We must compute Re[ω₀(ε)] and its associated A₀ to get the correct values
-    _, ∂LDOS_∂ε = ∇_ε_LDOS(A, b, ω)
+    LDOS, ∂LDOS_∂ε = ∇_ε_LDOS(A, b, ω)
     ∂LDOS_∂ω = ∇_ω_LDOS(A, b, ε, ω)
     ∂ω_∂ε = real.(Eigengradient(A, ε, ω, x₀))
 
-    return Just_LDOS(L, ε, ω, b; resolution, dpml, ω_pml), ∂LDOS_∂ε .+  ∂LDOS_∂ω .* ∂ω_∂ε
+    return LDOS, ∂LDOS_∂ε .+  ∂LDOS_∂ω .* ∂ω_∂ε
 end
 
 export Improved_∇_ε_LDOS
@@ -172,3 +172,12 @@ function Just_Improved_LDOS(L, ε, ω, b; resolution=20, dpml=2, ω_pml=ω)
 end
 
 export Just_Improved_LDOS
+
+function Maxwell_omega(L, ε, ω, b)
+    A, _ = Maxwell1d(L, ε, ω)
+    eigval, _ = Arnoldi_eig(A, ε, ω, b)
+    
+    return sqrt(eigval)
+end
+
+export Maxwell_omega
