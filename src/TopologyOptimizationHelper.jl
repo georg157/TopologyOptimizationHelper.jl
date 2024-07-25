@@ -1,6 +1,14 @@
-module TopologyOptimizationHelper
+##### TopologyOptimizationHelper.jl
 
-export Maxwell1d
+
+module TopologyOptimizationHelper
+using SparseArrays
+using LinearAlgebra
+using NLopt
+using PyPlot
+using KrylovKit
+using FiniteDifferences
+
 include("functions.jl")
 
 end

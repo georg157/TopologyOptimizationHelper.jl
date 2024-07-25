@@ -3,6 +3,14 @@ uuid = "b5275363-5667-4a27-81d8-f48bed5c410a"
 authors = ["George Shaker"]
 version = "1.0.0-DEV"
 
+[deps]
+FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+KrylovKit = "0b1a1467-8014-51b9-945f-bf0ae24f4b77"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NLopt = "76087f3c-5699-56af-9a33-bf431cd00edd"
+PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+
 [compat]
 julia = "1.6.7"
 
