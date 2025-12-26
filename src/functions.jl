@@ -2,7 +2,7 @@
 
 
 # Approximate the operator A that solves Au = b
-function Maxwell1d(L, ε, ω; dpml=2, resolution=20, Rpml=1e-20, ω_pml=ω)
+function Maxwell1d(L, ε, ω; dpml=0.5, resolution=20, Rpml=1e-20, ω_pml=ω)
     # PML σ = σ₀ x², with σ₀ chosen so that the round-trip reflection is Rpml
     σ₀ = -log(Rpml) / (4dpml^3/3)
     M = round(Int, (L+2dpml) * resolution)
@@ -30,35 +30,48 @@ end
 export Maxwell1d
 
 
-function LDOS_Optimize(L, ε, ω, b; dpml=2, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_width=L)
+function LDOS_Optimize(L, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_width=L, fixed_width=0)
     A, x = Maxwell1d(L, ε, ω; dpml, resolution, Rpml)
-    D² = A + ω^2 .* spdiagm(ε)
+    D² = A + spdiagm(ω^2 .* ε)
     M = length(x)
     LDOS_vals = Float64[]
+    omegas = ComplexF64[]
     
     function LDOS_obj(ε, grad)
-        A = D² - ω^2 .* spdiagm(ε)
+        A = D² - spdiagm(ω^2 .* ε)
         LDOS, ∇LDOS = ∇_ε_LDOS(A, ω, b)
         grad .= ∇LDOS
         push!(LDOS_vals, LDOS)
+
+        A_now, _ = Maxwell1d(L, ε, ω; resolution, dpml, Rpml)
+        ω₀_now = sqrt(Arnoldi_eig(A_now, ε, ω, b)[1])
+        push!(omegas, ω₀_now)
         
         return LDOS
     end
 
-    design_indices = -design_width/2 .< x .- mean(x) .< design_width/2
-    ub = ones(M)
+    design_indices = (-design_width/2 .< x .- mean(x) .< design_width/2) .& .!(-fixed_width/2 .< x .- mean(x) .< fixed_width/2)
+    ub = copy(ε)
+    lb = copy(ε)
     ub[design_indices] .= 12
+    lb[design_indices] .= 1
     opt = Opt(:LD_CCSAQ, M)
-    opt.lower_bounds = 1
+    opt.lower_bounds = lb
     opt.upper_bounds = ub
     opt.ftol_rel = ftol
     opt.maxeval = max_eval
     opt.max_objective = LDOS_obj
 
     (LDOS_opt, ε_opt, ret) = optimize(opt, ε)
+    A_opt, _ = Maxwell1d(L, ε_opt, ω; resolution, dpml, Rpml)
+    ω₀_opt = sqrt(Arnoldi_eig(A_opt, ε_opt, ω, b)[1])
+    Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
+
     @show numevals = opt.numevals # the number of function evaluations
+    @show ω₀_opt
+    @show Q_opt
     
-    return LDOS_opt, ε_opt, LDOS_vals, x
+    return LDOS_opt, ε_opt, LDOS_vals, omegas, x
 end
 export LDOS_Optimize
 
@@ -86,7 +99,7 @@ end
 export Fabry_Perot_epsilon
 
 
-function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=2, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, ω_pml=ω, design_width=L)
+function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, ω_pml=ω, design_width=L)
     A, x = Maxwell1d(L, ε, ω; dpml, resolution, Rpml)
     D² = A + ω^2 .* spdiagm(ε)
     M = length(x)
@@ -95,21 +108,21 @@ function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=2, resolution=20, Rpml=1e-20
     
     function mod_LDOS_obj(ε, grad)
         E = spdiagm(ε)
-        A = D² - ω^2 .* E
-        ω₀², u₀ = Arnoldi_eig(A, ε, ω, x₀)
-        ω₀ = sqrt(ω₀²)
+        E⁻¹ = spdiagm(1 ./ ε)
+        A = D² - real(ω)^2 .* E
+        C = E⁻¹ * A
+        LU = lu(C)
+        vals, vecs, _ = eigsolve(z -> LU \ z, x₀, 1, :LM, Arnoldi())
+        vals = sqrt.(1 ./ vals .+ ω^2)
+        ω₀, u₀ = vals[1], vecs[1]
         A₀ = D² - real(ω₀)^2 .* E
         v = A₀ \ b
-        w = A₀' \ b
-    
-        @show real(ω₀) - ω
-        Libc.flush_cstdio()
-    
+        w = conj.(v)
         LDOS = -imag(v' * b)
 
         if !isempty(grad) 
-            ∂LDOS_∂ε = -imag.(real(ω₀)^2 .* conj.(v) .* w)
-            ∂LDOS_∂ω = -imag(2real(ω₀) .* v' * E * w)
+            ∂LDOS_∂ε = real(ω₀)^2 * imag.(v.^2)
+            ∂LDOS_∂ω = -2real(ω₀) * imag(v' * E * w)
             ∂ω_∂ε = -ω₀ .* u₀.^2 ./ 2sum(u₀.^2 .* ε)
             ∇LDOS = ∂LDOS_∂ε .+  ∂LDOS_∂ω .* real.(∂ω_∂ε)
 
@@ -136,21 +149,22 @@ function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=2, resolution=20, Rpml=1e-20
     ub[design_indices] .= 12
     
     opt = Opt(:LD_CCSAQ, M)
-    opt.params["verbosity"] = 1
+    # opt.params["verbosity"] = 1
     opt.lower_bounds = 1
     opt.upper_bounds = ub
     opt.ftol_rel = ftol
     opt.maxeval = max_eval
     opt.max_objective = mod_LDOS_obj
-    opt.initial_step = 1e-3
+    # opt.initial_step = 1e-3
     inequality_constraint!(opt, freq_constraint)
+
 
     (LDOS_opt, ε_opt, ret) = optimize(opt, ε)
     ω₀ = omegas[end]
     Q = -real(ω₀) / 2imag(ω₀)
 
     @show numevals = opt.numevals # the number of function evaluations
-    @show ω - real(ω₀)
+    @show ω₀
     @show Q
     
     return LDOS_opt, ε_opt, LDOS_vals, omegas, x

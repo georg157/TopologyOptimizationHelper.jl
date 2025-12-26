@@ -8,7 +8,7 @@ function ∇_ε_LDOS(A, ω, b; α=0)
     w = conj.(A) \ b
 
     LDOS = -imag(v' * b)
-    ∇_epsilon_LDOS = -imag.((1 - α * im) * ω^2 .* conj.(v) .* w)
+    ∇_epsilon_LDOS = ω^2 * imag.(v.^2)
 
     return LDOS, ∇_epsilon_LDOS
 end
@@ -42,7 +42,7 @@ function Arnoldi_eig(A, ε, ω, x₀)
     E⁻¹ = spdiagm(1 ./ ε)
     M = E⁻¹ * A
     LU = lu(M)
-    vals, vecs, info = eigsolve(z -> LU \ z, x₀, 3, :LM, Arnoldi())
+    vals, vecs, info = eigsolve(z -> LU \ z, x₀, 1, :LM, Arnoldi())
     # If the optimizer ignores the constraint, use
     # EigSorter(λ -> real(sqrt(1 / λ + ω^2)) <= ω ? abs(λ) : -Inf, rev=true)
     # instead of :LM
@@ -81,9 +81,6 @@ function Improved_∇_ε_LDOS(D², ε, ω, b, x₀)
     A₀ = D² - real(ω₀)^2 .* E
     v = A₀ \ b
     w = conj.(A₀) \ b
-
-    @show real(ω₀) - ω
-    Libc.flush_cstdio()
 
     LDOS = -imag(v' * b)
     ∂LDOS_∂ε = -imag.(real(ω₀)^2 .* conj.(v) .* w)

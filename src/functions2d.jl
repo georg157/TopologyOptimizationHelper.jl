@@ -45,42 +45,49 @@ end
 export Maxwell2d
 
 
-function LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx, Ly), α=0)
+function LDOS_Optimize2d(Lx, Ly, ρ, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx, Ly), max_mat=11, mat_loss=0)
+    ε = (max_mat + mat_loss * im) * ρ .+ 1
     A, x, y = Maxwell2d(Lx, Ly, ε, ω; dpml, resolution, Rpml)
     ε = vec(ε)
+    ρ = vec(ρ)
     b = vec(b)
     D² = A + spdiagm(ω^2 .* ε)
     M, N = length(x), length(y)
     LDOS_vals = Float64[]
     omegas = ComplexF64[]
+    iter = 1
     
-    function LDOS_obj(ε, grad)
-        A = D² - spdiagm(ω^2 .* ε .* (1 + α * im))
-        LDOS, ∇LDOS = ∇_ε_LDOS(A, ω, b; α)
+    function LDOS_obj(ρ, grad)
+        ε = (max_mat + mat_loss * im) * ρ .+ 1
+        A = D² - spdiagm(ω^2 .* ε)
+        LDOS, ∇LDOS = ∇_ε_LDOS(A, ω, b)
         grad .= ∇LDOS
         push!(LDOS_vals, LDOS)
 
         A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ε, N,M), ω; resolution)
         ω₀_now = sqrt(Arnoldi_eig(A_now, ε, ω, vec(b))[1])
         push!(omegas, ω₀_now)
+        @show iter, LDOS
+        iter += 1
         return LDOS
     end
 
     design_x, design_y = design_dimensions
     x_indices = -design_x / 2 .< x .- mean(x) .< design_x / 2
     y_indices = -design_y / 2 .< y .- mean(y) .< design_y / 2
-    ub = ones(N,M)
-    ub[y_indices, x_indices] .= 12
+    ub = zeros(N,M)
+    ub[y_indices, x_indices] .= 1
     ub = vec(ub)
     
     opt = Opt(:LD_CCSAQ, M * N)
-    opt.lower_bounds = 1
+    opt.lower_bounds = 0
     opt.upper_bounds = ub
     opt.ftol_rel = ftol
     opt.maxeval = max_eval
     opt.max_objective = LDOS_obj
 
-    (LDOS_opt, ε_opt, ret) = optimize(opt, ε)
+    (LDOS_opt, ρ_opt, ret) = optimize(opt, ρ)
+    ε_opt = (max_mat + mat_loss * im) * ρ_opt .+ 1
     A_opt, _, _ = Maxwell2d(Lx, Ly, ε_opt, ω; resolution)
     ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(ε_opt), ω, vec(b))[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
@@ -94,16 +101,20 @@ end
 export LDOS_Optimize2d
 
 
-function mod_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx,Ly))
+function mod_LDOS_Optimize2d(Lx, Ly, ρ, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx,Ly), max_mat=11, mat_loss=0)
+    ε = (max_mat + mat_loss * im) * ρ .+ 1
     A, x, y = Maxwell2d(Lx, Ly, ε, ω; dpml, resolution, Rpml)
     ε = vec(ε)
+    ρ = vec(ρ)
     b = vec(b)
     D² = A + ω^2 .* spdiagm(ε)
     M, N = length(x), length(y)
     mod_LDOS_vals = Float64[]
     mod_omegas = ComplexF64[]
+    iter = 1
     
-    function mod_LDOS_obj(ε, grad)
+    function mod_LDOS_obj(ρ, grad)
+        ε = (max_mat + mat_loss * im) * ρ .+ 1 
         E = spdiagm(ε)
         E⁻¹ = spdiagm(1 ./ ε)
         A = D² - real(ω)^2 .* E
@@ -121,7 +132,7 @@ function mod_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=20, R
         imaginaries = imag.(vals)
         if !isempty(grad) 
             ∂LDOS_∂ε = -imag.(real(ω₀)^2 .* w.^2)
-            ∂LDOS_∂ω = -imag(2real(ω₀) .* sum(w.^2 .* ε))
+            ∂LDOS_∂ω = -imag(2real(ω₀) .* sum(w.^2 .* conj.(ε)))
             ∂ω_∂ε = -ω₀ .* u₀.^2 ./ 2sum(u₀.^2 .* ε)
             ∇LDOS = ∂LDOS_∂ε .+  ∂LDOS_∂ω .* real.(∂ω_∂ε)
 
@@ -130,11 +141,13 @@ function mod_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=20, R
 
         push!(mod_LDOS_vals, LDOS)
         push!(mod_omegas, ω₀)
-
+        @show iter, LDOS
+        iter += 1
         return LDOS
     end
 
-    function freq_constraint(ε, grad)
+    function freq_constraint(ρ, grad)
+        ε = (max_mat + mat_loss * im) * ρ .+ 1
         ω₀, ∂ω_∂ε = Eigengradient(A, ε, ω, x₀)
         if !isempty(grad) 
             grad .= -real.(∂ω_∂ε)
@@ -146,21 +159,22 @@ function mod_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=20, R
     design_x, design_y = design_dimensions
     x_indices = -design_x / 2 .< x .- mean(x) .< design_x / 2
     y_indices = -design_y / 2 .< y .- mean(y) .< design_y / 2
-    ub = ones(N,M)
-    ub[y_indices, x_indices] .= 12
+    ub = zeros(N,M)
+    ub[y_indices, x_indices] .= 1
     ub = vec(ub)
     
     opt = Opt(:LD_CCSAQ, M * N)
     # opt.params["verbosity"] = 1
-    opt.lower_bounds = 1
+    opt.lower_bounds = 0
     opt.upper_bounds = ub
     opt.ftol_rel = ftol
     opt.maxeval = max_eval
     opt.max_objective = mod_LDOS_obj
-    opt.initial_step = 1e-3
+    # opt.initial_step = 1e-3
     inequality_constraint!(opt, freq_constraint)
 
-    (mod_LDOS_opt, mod_ε_opt, ret) = optimize(opt, ε)
+    (mod_LDOS_opt, mod_ρ_opt, ret) = optimize(opt, ρ)
+    mod_ε_opt = (max_mat + mat_loss * im) * mod_ρ_opt .+ 1
     A_opt, _, _ = Maxwell2d(Lx, Ly, mod_ε_opt, ω; resolution)
     ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_ε_opt), ω, vec(b))[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
