@@ -47,9 +47,9 @@ function edgepad(arr, pad)
             vcat(bottom_left, bottom, bottom_right),
         )
     elseif (pad[1][1] == 0) & (pad[1][2] == 0) & (pad[2][1] > 0) & (pad[2][2] > 0)
-        return hcat((top, arr, bottom))
+        return hcat(top, arr, bottom)
     elseif (pad[1][1] > 0) & (pad[1][2] > 0) & (pad[2][1] == 0) & (pad[2][2] == 0)
-        return hcat((left, arr, right))
+        return vcat(left, arr, right)
     elseif (pad[1][1] == 0) & (pad[1][2] == 0) & (pad[2][1] == 0) & (pad[2][2] == 0)
         return arr
     else

@@ -43,8 +43,7 @@ function LDOS_Optimize(L, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1
         grad .= ∇LDOS
         push!(LDOS_vals, LDOS)
 
-        A_now, _ = Maxwell1d(L, ε, ω; resolution, dpml, Rpml)
-        ω₀_now = sqrt(Arnoldi_eig(A_now, ε, ω, b)[1])
+        ω₀_now = sqrt(Arnoldi_eig(A, ε, ω, b)[1])
         push!(omegas, ω₀_now)
         
         return LDOS
@@ -100,7 +99,7 @@ export Fabry_Perot_epsilon
 
 
 function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, ω_pml=ω, design_width=L)
-    A, x = Maxwell1d(L, ε, ω; dpml, resolution, Rpml)
+    A, x = Maxwell1d(L, ε, ω; dpml, resolution, Rpml, ω_pml)
     D² = A + ω^2 .* spdiagm(ε)
     M = length(x)
     LDOS_vals = Float64[]
@@ -136,6 +135,7 @@ function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-
     end
 
     function freq_constraint(ε, grad)
+        A = D² - real(ω)^2 .* spdiagm(ε)
         ω₀, ∂ω_∂ε = Eigengradient(A, ε, ω, x₀)
         if !isempty(grad) 
             grad .= -real.(∂ω_∂ε)
@@ -160,7 +160,9 @@ function mod_LDOS_Optimize(L, ε, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-
 
 
     (LDOS_opt, ε_opt, ret) = optimize(opt, ε)
-    ω₀ = omegas[end]
+    E_opt = spdiagm(ε_opt)
+    A_opt = D² - real(ω)^2 .* E_opt
+    ω₀ = sqrt(Arnoldi_eig(A_opt, ε_opt, ω, x₀)[1])
     Q = -real(ω₀) / 2imag(ω₀)
 
     @show numevals = opt.numevals # the number of function evaluations

@@ -2,10 +2,9 @@
 
 
 # Compute the LDOS and gradient of a system given a matrix A, vector b, and frequency ω
-function ∇_ε_LDOS(A, ω, b; α=0)
+function ∇_ε_LDOS(A, ω, b)
     # derivative of matrix A with respect to vector ε
     v = A \ b
-    w = conj.(A) \ b
 
     LDOS = -imag(v' * b)
     ∇_epsilon_LDOS = ω^2 * imag.(v.^2)
@@ -17,7 +16,7 @@ export ∇_ε_LDOS
 
 # Compute LDOS given the necessary parameters to compute the operator A
 function Just_LDOS(L, ε, ω, b; resolution=20, dpml=2, Rpml=1e-20, ω_pml=ω)
-    A, x = Maxwell1d(L, ε, ω; resolution, dpml, Rpml, ω_pml)
+    A, _ = Maxwell1d(L, ε, ω; resolution, dpml, Rpml, ω_pml)
     LDOS, _ = ∇_ε_LDOS(A, ω, b)
     
     return LDOS
@@ -42,7 +41,7 @@ function Arnoldi_eig(A, ε, ω, x₀)
     E⁻¹ = spdiagm(1 ./ ε)
     M = E⁻¹ * A
     LU = lu(M)
-    vals, vecs, info = eigsolve(z -> LU \ z, x₀, 1, :LM, Arnoldi())
+    vals, vecs, _ = eigsolve(z -> LU \ z, x₀, 1, :LM, Arnoldi())
     # If the optimizer ignores the constraint, use
     # EigSorter(λ -> real(sqrt(1 / λ + ω^2)) <= ω ? abs(λ) : -Inf, rev=true)
     # instead of :LM
@@ -105,17 +104,14 @@ function Improved_∇_ε_LDOS(D², ε, ω, b, x₀)
     #     grad .= ∇LDOS
 end
 
-
 function Just_Improved_LDOS(L, ε, ω, b; resolution=20, dpml=2, Rpml=1e-20, ω_pml=ω)
-    A, x = Maxwell1d(L, ε, ω; resolution, dpml, Rpml, ω_pml)
-    ω₀ = Maxwell_omega(L, ε, ω, b)
-    A₀, _ = Maxwell1d(L, ε, real(ω₀); ω_pml=ω)
+    ω₀ = Maxwell_omega(L, ε, ω, b; resolution, dpml, Rpml, ω_pml)
+    A₀, _ = Maxwell1d(L, ε, real(ω₀); resolution, dpml, Rpml, ω_pml)
     LDOS, _ = ∇_ε_LDOS(A₀, real(ω₀), b)
-    
+
     return LDOS
 end
 export Just_Improved_LDOS
-
 
 function Maxwell_omega(L, ε, ω, x₀; resolution=20, dpml=2, Rpml=1e-20, ω_pml=ω)
     A, _ = Maxwell1d(L, ε, ω; resolution, dpml, Rpml, ω_pml)

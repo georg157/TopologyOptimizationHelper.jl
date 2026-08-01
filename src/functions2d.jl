@@ -46,7 +46,8 @@ export Maxwell2d
 
 
 function LDOS_Optimize2d(Lx, Ly, ρ, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx, Ly), max_mat=11, mat_loss=0)
-    ε = (max_mat + mat_loss * im) * ρ .+ 1
+    material_scale = max_mat + mat_loss * im
+    ε = material_scale * ρ .+ 1
     A, x, y = Maxwell2d(Lx, Ly, ε, ω; dpml, resolution, Rpml)
     ε = vec(ε)
     ρ = vec(ρ)
@@ -58,13 +59,16 @@ function LDOS_Optimize2d(Lx, Ly, ρ, ω, b; dpml=0.5, resolution=20, Rpml=1e-20,
     iter = 1
     
     function LDOS_obj(ρ, grad)
-        ε = (max_mat + mat_loss * im) * ρ .+ 1
+        ε = material_scale * ρ .+ 1
         A = D² - spdiagm(ω^2 .* ε)
-        LDOS, ∇LDOS = ∇_ε_LDOS(A, ω, b)
-        grad .= ∇LDOS
+        v = A \ b
+        LDOS = -imag(v' * b)
+        if !isempty(grad)
+            grad .= ω^2 .* imag.(material_scale .* v.^2)
+        end
         push!(LDOS_vals, LDOS)
 
-        A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ε, N,M), ω; resolution)
+        A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ε, N,M), ω; dpml, resolution, Rpml)
         ω₀_now = sqrt(Arnoldi_eig(A_now, ε, ω, vec(b))[1])
         push!(omegas, ω₀_now)
         @show iter, LDOS
@@ -87,8 +91,8 @@ function LDOS_Optimize2d(Lx, Ly, ρ, ω, b; dpml=0.5, resolution=20, Rpml=1e-20,
     opt.max_objective = LDOS_obj
 
     (LDOS_opt, ρ_opt, ret) = optimize(opt, ρ)
-    ε_opt = (max_mat + mat_loss * im) * ρ_opt .+ 1
-    A_opt, _, _ = Maxwell2d(Lx, Ly, ε_opt, ω; resolution)
+    ε_opt = material_scale * ρ_opt .+ 1
+    A_opt, _, _ = Maxwell2d(Lx, Ly, ε_opt, ω; dpml, resolution, Rpml)
     ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(ε_opt), ω, vec(b))[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
 
@@ -102,7 +106,8 @@ export LDOS_Optimize2d
 
 
 function mod_LDOS_Optimize2d(Lx, Ly, ρ, ω, b, x₀; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx,Ly), max_mat=11, mat_loss=0)
-    ε = (max_mat + mat_loss * im) * ρ .+ 1
+    material_scale = max_mat + mat_loss * im
+    ε = material_scale * ρ .+ 1
     A, x, y = Maxwell2d(Lx, Ly, ε, ω; dpml, resolution, Rpml)
     ε = vec(ε)
     ρ = vec(ρ)
@@ -114,7 +119,7 @@ function mod_LDOS_Optimize2d(Lx, Ly, ρ, ω, b, x₀; dpml=0.5, resolution=20, R
     iter = 1
     
     function mod_LDOS_obj(ρ, grad)
-        ε = (max_mat + mat_loss * im) * ρ .+ 1 
+        ε = material_scale * ρ .+ 1 
         E = spdiagm(ε)
         E⁻¹ = spdiagm(1 ./ ε)
         A = D² - real(ω)^2 .* E
@@ -128,13 +133,11 @@ function mod_LDOS_Optimize2d(Lx, Ly, ρ, ω, b, x₀; dpml=0.5, resolution=20, R
         w = conj.(v)
         LDOS = -imag(v' * b)
         
-        reals = real.(vals)
-        imaginaries = imag.(vals)
         if !isempty(grad) 
-            ∂LDOS_∂ε = -imag.(real(ω₀)^2 .* w.^2)
+            ∂LDOS_∂ε = real.(material_scale .* (im * real(ω₀)^2 .* w.^2))
             ∂LDOS_∂ω = -imag(2real(ω₀) .* sum(w.^2 .* conj.(ε)))
-            ∂ω_∂ε = -ω₀ .* u₀.^2 ./ 2sum(u₀.^2 .* ε)
-            ∇LDOS = ∂LDOS_∂ε .+  ∂LDOS_∂ω .* real.(∂ω_∂ε)
+            ∂ω_∂ρ = real.(material_scale .* (-ω₀ .* u₀.^2 ./ 2sum(u₀.^2 .* ε)))
+            ∇LDOS = ∂LDOS_∂ε .+  ∂LDOS_∂ω .* ∂ω_∂ρ
 
             grad .= ∇LDOS
         end
@@ -147,10 +150,11 @@ function mod_LDOS_Optimize2d(Lx, Ly, ρ, ω, b, x₀; dpml=0.5, resolution=20, R
     end
 
     function freq_constraint(ρ, grad)
-        ε = (max_mat + mat_loss * im) * ρ .+ 1
+        ε = material_scale * ρ .+ 1
+        A = D² - real(ω)^2 .* spdiagm(ε)
         ω₀, ∂ω_∂ε = Eigengradient(A, ε, ω, x₀)
         if !isempty(grad) 
-            grad .= -real.(∂ω_∂ε)
+            grad .= -real.(material_scale .* ∂ω_∂ε)
         end
 
         return ω - real(ω₀)
@@ -174,9 +178,9 @@ function mod_LDOS_Optimize2d(Lx, Ly, ρ, ω, b, x₀; dpml=0.5, resolution=20, R
     inequality_constraint!(opt, freq_constraint)
 
     (mod_LDOS_opt, mod_ρ_opt, ret) = optimize(opt, ρ)
-    mod_ε_opt = (max_mat + mat_loss * im) * mod_ρ_opt .+ 1
-    A_opt, _, _ = Maxwell2d(Lx, Ly, mod_ε_opt, ω; resolution)
-    ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_ε_opt), ω, vec(b))[1])
+    mod_ε_opt = material_scale * mod_ρ_opt .+ 1
+    A_opt, _, _ = Maxwell2d(Lx, Ly, mod_ε_opt, ω; dpml, resolution, Rpml)
+    ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_ε_opt), ω, x₀)[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
 
     @show numevals = opt.numevals # the number of function evaluations

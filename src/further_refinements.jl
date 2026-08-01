@@ -1,6 +1,6 @@
 ##### further_refinements.jl
 
-function log_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx, Ly), α=0)
+function log_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e-20, ftol=1e-4, max_eval=500, design_dimensions=(Lx, Ly))
     A, x, y = Maxwell2d(Lx, Ly, ε, ω; dpml, resolution, Rpml)
     ε = vec(ε)
     b = vec(b)
@@ -10,13 +10,13 @@ function log_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e
     log_omegas = ComplexF64[]
     
     function log_LDOS_obj(ε, grad)
-        A = D² - spdiagm(ω^2 .* ε .* (1 + α * im))
-        LDOS, ∇LDOS = ∇_ε_LDOS(A, ω, b; α)
+        A = D² - spdiagm(ω^2 .* ε)
+        LDOS, ∇LDOS = ∇_ε_LDOS(A, ω, b)
         log_LDOS = log(abs(LDOS))
         grad .= ∇LDOS / LDOS
         push!(log_LDOS_vals, log_LDOS)
 
-        A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ε, N,M), ω; resolution)
+        A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ε, N,M), ω; dpml, resolution, Rpml)
         ω₀_now = sqrt(Arnoldi_eig(A_now, ε, ω, vec(b))[1])
         push!(log_omegas, ω₀_now)
         return log_LDOS
@@ -37,7 +37,7 @@ function log_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml=1e
     opt.max_objective = log_LDOS_obj
 
     (log_LDOS_opt, log_ε_opt, ret) = optimize(opt, ε)
-    A_opt, _, _ = Maxwell2d(Lx, Ly, log_ε_opt, ω; resolution)
+    A_opt, _, _ = Maxwell2d(Lx, Ly, log_ε_opt, ω; dpml, resolution, Rpml)
     ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(log_ε_opt), ω, vec(b))[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
 
@@ -74,8 +74,6 @@ function mod_log_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=2
         LDOS = -imag(v' * b)
         log_LDOS = log(abs(LDOS))
         
-        reals = real.(vals)
-        imaginaries = imag.(vals)
         if !isempty(grad) 
             ∂log_LDOS_∂ε = -imag.(real(ω₀)^2 .* w.^2) / LDOS
             ∂log_LDOS_∂ω = -imag(2real(ω₀) .* sum(w.^2 .* ε)) / LDOS
@@ -92,6 +90,7 @@ function mod_log_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=2
     end
 
     function freq_constraint(ε, grad)
+        A = D² - ω^2 .* spdiagm(ε)
         ω₀, ∂ω_∂ε = Eigengradient(A, ε, ω, x₀)
         if !isempty(grad) 
             grad .= -real.(∂ω_∂ε)
@@ -118,8 +117,8 @@ function mod_log_LDOS_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=2
     inequality_constraint!(opt, freq_constraint)
 
     (mod_log_LDOS_opt, mod_log_ε_opt, ret) = optimize(opt, ε)
-    A_opt, _, _ = Maxwell2d(Lx, Ly, mod_log_ε_opt, ω; resolution)
-    ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_log_ε_opt), ω, vec(b))[1])
+    A_opt, _, _ = Maxwell2d(Lx, Ly, mod_log_ε_opt, ω; dpml, resolution, Rpml)
+    ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_log_ε_opt), ω, x₀)[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
 
     @show numevals = opt.numevals # the number of function evaluations
@@ -150,9 +149,6 @@ function smooth_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml
     ub = vec(ub)
     design_inds = findall(ub .== 12)
 
-    pad_x_dpml = Lx - design_x + 2dpml
-    pad_y_dpml = Ly - design_y + 2dpml
-
     master_pad = ones(N*M)
     
     function LDOS_obj(ε, grad)
@@ -168,7 +164,7 @@ function smooth_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml
         grad[design_inds] .= back(∇LDOS)[1]
         push!(smooth_LDOS_vals, LDOS)
 
-        A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ζ_padded, N,M), ω; resolution)
+        A_now, _, _ = Maxwell2d(Lx, Ly, reshape(ζ_padded, N,M), ω; dpml, resolution, Rpml)
         ω₀_now = sqrt(Arnoldi_eig(A_now, ζ_padded, ω, vec(b))[1])
         push!(smooth_omegas, ω₀_now)
 
@@ -185,10 +181,8 @@ function smooth_LDOS_Optimize2d(Lx, Ly, ε, ω, b; dpml=0.5, resolution=20, Rpml
     (smooth_LDOS_opt, ε_opt, ret) = optimize(opt, ε)
     ε_opt = ε_opt[design_inds]
     smooth_ε_opt = my_smoother(size_x, size_y, ε_opt; resolution, fR, β, η)
-    # smooth_ε_opt = reshape(smooth_ε_opt, size_y,size_x)
-    # smooth_ε_opt = vec(pad_matrix(smooth_ε_opt, pad_x_dpml, pad_y_dpml, 1; resolution))
     master_pad[design_inds] = smooth_ε_opt
-    A_opt, _, _ = Maxwell2d(Lx, Ly, master_pad, ω; resolution)
+    A_opt, _, _ = Maxwell2d(Lx, Ly, master_pad, ω; dpml, resolution, Rpml)
     ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(master_pad), ω, vec(b))[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
 
@@ -301,8 +295,8 @@ function mod_smooth_Optimize2d(Lx, Ly, ε, ω, b, x₀; dpml=0.5, resolution=20,
     mod_smooth_ε_opt = my_smoother(size_x, size_y, mod_ε_opt; resolution, fR, β, η)
     mod_smooth_ε_opt = reshape(mod_smooth_ε_opt, size_y,size_x)
     mod_smooth_ε_opt = vec(pad_matrix(mod_smooth_ε_opt, pad_x_dpml, pad_y_dpml, 1; resolution))
-    A_opt, _, _ = Maxwell2d(Lx, Ly, mod_smooth_ε_opt, ω; resolution)
-    ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_smooth_ε_opt), ω, vec(b))[1])
+    A_opt, _, _ = Maxwell2d(Lx, Ly, mod_smooth_ε_opt, ω; dpml, resolution, Rpml)
+    ω₀_opt = sqrt(Arnoldi_eig(A_opt, vec(mod_smooth_ε_opt), ω, x₀)[1])
     Q_opt = -real(ω₀_opt) / 2imag(ω₀_opt)
 
     @show numevals = opt.numevals # the number of function evaluations
